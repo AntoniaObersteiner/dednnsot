@@ -1,9 +1,11 @@
 #include <argp.h>
 #include <cstdlib>
+#include <ctime>
 #include <format>
 #include <iostream>
 #include <list>
 #include <portaudio.h>
+#include <queue>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -32,20 +34,27 @@ class Trainer {
 public:
 	static const std::string chars;
 	static const std::unordered_map<char, std::string> morse_code;
+	static constexpr unsigned long frames_per_second = 44100;
+
+	long unsigned frame = 0;
 
 	class Args {
 	public:
 		bool print_text     { false };
-		int  tick_ms        { 100 };
+		int  wpm            {  15 };
 		int  training_level {   2 };
 		int  line_length    {  25 };
 		int  line_count     {   5 };
 	};
 
-	// pa_callback shared data
+	// pulse audio playback buffer shared data
 	float left_phase  {  0.0f };
 	float right_phase {  0.0f };
-	bool  playing	  { false };
+	bool playing      { false }; // whether the note is pulse-audio-currently playing
+
+	std::queue<bool> playing_bits;
+	std::counting_semaphore<10> full {  0 };
+	std::counting_semaphore<10> free { 10 };
 
 	PaStream * pa_stream;
 
@@ -54,6 +63,7 @@ public:
 	Trainer (
 		const Args & args
 	) : args(args) {
+		std::srand(std::time(0));
 		pa_setup();
 	}
 
@@ -62,9 +72,15 @@ public:
 		pa_call(" terminating", Pa_Terminate);
 	}
 
-	size_t word_length () const {
-		return std::rand() % 8 + 2;
-	}
+	// 1 word == 5 letters,
+	// so with an average 6 ticks per letter,
+	// 1 word == 50 ticks
+	// with a typing speed v in words / minute (number V = v unitless), we get
+	// v = V words / minute = V * 50 ticks / (60000 ms)
+	// rearrange for one tick:
+	// 1 tick = 60.000 ms / (V * 50)
+	double  s_per_tick () const { return 60.0 / (50.0 * args.wpm); }
+	double ms_per_tick () const { return ms_per_tick() * 1000.0; }
 
 	std::vector<bool> morse_bits(char letter) {
 		const std::string & code = morse_code.at(letter);
@@ -72,9 +88,9 @@ public:
 		for (const char l : code) {
 			auto tail = [&] () {
 			switch (l) {
-			case '.': return std::list<bool>{1,    0};
-			case '-': return std::list<bool>{1, 1, 0};
-			case ' ': return std::list<bool>{0, 0, 0};
+			case '.': return std::list<bool>{1,       0};
+			case '-': return std::list<bool>{1, 1, 1, 0};
+			case ' ': return std::list<bool>{0, 0, 0, 0};
 			default: throw std::runtime_error(std::format("unknown morse letter '{}'!", l));
 			}
 			} ();
@@ -85,6 +101,7 @@ public:
 			#endif
 		}
 		result.push_back(0);
+		result.push_back(0);
 		return result;
 	}
 
@@ -92,7 +109,10 @@ public:
 		const std::string used = chars.substr(0, args.training_level);
 		std::string result = "";
 		while (result.size() < args.line_length) {
-			for (int i = 0; i < word_length() && result.size() < args.line_length; i++) {
+			int word_length = std::rand() % 8 + 2;
+			if (args.line_length == result.size() + word_length + 1)
+				word_length++;
+			for (int i = 0; i < word_length && result.size() < args.line_length; i++) {
 				char chosen = used[std::rand() % used.size()];
 				result.push_back(chosen);
 			}
@@ -142,56 +162,94 @@ public:
 	std::thread play_async (const std::string & output) {
 		return std::thread([&] () {
 			for (const auto & c : output) {
-				std::cerr << c;
 				for (const bool bit : morse_bits(c)) {
-					playing = bit;
-					Pa_Sleep(args.tick_ms);
+					free.acquire();
+					playing_bits.push(bit);
+					full.release();
 				}
+				if (args.print_text) std::cerr << c;
 			}
-			std::cerr << std::endl;
+			if (args.print_text) std::cerr << std::endl;
 		});
 	}
 
-	int train () {
-		std::string output = generate();
+	void play (const std::string & output) {
+		play_async(output).join();
+	}
 
+	float train () {
 		pa_call(" starting", Pa_StartStream, pa_stream);
 
-		std::cout << "Type what you hear:" << std::endl;
-		auto thread = play_async(output);
-		std::string input;
-		getline(std::cin, input);
-		thread.join();
-		std::cout << " input: '" <<  input << "'" << std::endl;
-		std::cout << "output: '" << output << "'" << std::endl;
+		std::cout << "Type what you hear after the 'vvv'!" << std::endl;
+		std::cout << "Press enter after the '=' (eval at the end)." << std::endl;
+		play("vvv");
+
+		int errors = 0;
+		int symbols = 0;
+		std::vector<std::string> outputs;
+		std::vector<std::string>  inputs;
+
+		for (int line_number = 0; line_number < args.line_count; line_number++) {
+			const std::string & output = generate();
+			auto thread = play_async(output);
+			std::string input;
+			getline(std::cin, input);
+			thread.join();
+
+			errors += difference(input, output);
+			symbols += output.size() - 2; // for " =" at the end of each line
+
+			outputs.push_back(output);
+			inputs .push_back( input);
+		}
+
+		for (int line_number = 0; line_number < args.line_count; line_number++) {
+			std::cout << "output: '" << outputs[line_number] << "'" << std::endl;
+			std::cout << " input: '" <<  inputs[line_number] << "'" << std::endl;
+		}
+
+		std::cout << "Errors: " << errors << " / " << symbols << std::endl;
 
 		pa_call(" stopping", Pa_StopStream, pa_stream);
 
-		int errors = difference(input, output);
-		std::cout << "Errors: " << errors << " / " << output.size() << std::endl;
-		return errors;
+		return static_cast<float>(errors) / symbols;
 	}
 
-	void step_and_write_to_buffer (float * & out) {
-		if (!playing) {
-			left_phase = 0.0f;
-			right_phase = 0.0f;
-		} else {
-			// simple sawtooth phaser between -1.0 and 1.0.
-			left_phase += 0.01f;
-			if (left_phase >= 1.0f) left_phase -= 2.0f;
-			// right has higher pitch
-			right_phase += 0.03f;
-			if (right_phase >= 1.0f) right_phase -= 2.0f;
-		}
+	void step_and_write_to_buffer (float * & out, const int frames_per_buffer) {
+		const unsigned long frames_per_tick = frames_per_second * s_per_tick();
 
-		*out++ =  left_phase;
-		*out++ = right_phase;
+		long unsigned target_frame = frame + frames_per_buffer;
+
+		for (; frame < target_frame; frame++) {
+			if (frame % frames_per_tick == 0) {
+				if (!playing_bits.empty()) {
+					full.acquire();
+					playing = playing_bits.front();
+					playing_bits.pop();
+					free.release();
+				} else {
+					playing = false;
+				}
+			}
+
+			if (!playing) {
+				left_phase = 0.0f;
+				right_phase = 0.0f;
+			} else {
+				// simple sawtooth phaser between -1.0 and 1.0.
+				left_phase += 0.01f;
+				if (left_phase >= 1.0f) left_phase -= 2.0f;
+				// right has higher pitch
+				right_phase += 0.03f;
+				if (right_phase >= 1.0f) right_phase -= 2.0f;
+			}
+
+			*out++ =  left_phase;
+			*out++ = right_phase;
+		}
 	}
 
 	void pa_setup () {
-		constexpr unsigned long SAMPLE_RATE = 44100;
-
 		pa_call(" initializing", Pa_Initialize);
 
 		// paFramesPerBufferUnspecified tells PortAudio to pick the best,
@@ -206,7 +264,7 @@ public:
 			count_channels_input,
 			count_channels_output,
 			paFloat32,
-			SAMPLE_RATE,
+			frames_per_second,
 			256,
 			pa_callback,
 			this
@@ -214,16 +272,78 @@ public:
 	}
 };
 
-const std::string Trainer::chars = "mkrs";
+const std::string Trainer::chars = "mkrsuaptlowinjef0yvg5q9zh8b?4xcd67123";
 
 const std::unordered_map<char, std::string> Trainer::morse_code {
 	{ ' ', " " },
-	{ '=', "-...-  " },
+	{ 'a', ".-" },
+	{ 'b', "-..." },
+	{ 'c', "-.-." },
+	{ 'd', "-.." },
+	{ 'e', "." },
+	{ 'f', "..-." },
+	{ 'g', "--." },
+	{ 'h', "...." },
+	{ 'i', ".." },
+	{ 'j', ".---" },
+	{ 'k', "-.-" },
+	{ 'l', ".-.." },
 	{ 'm', "--" },
-	{ 'k', "-.." },
+	{ 'n', "-." },
+	{ 'o', "---" },
+	{ 'p', ".--." },
+	{ 'q', "--.-" },
 	{ 'r', ".-." },
 	{ 's', "..." },
-	{ 'v', "...-" }
+	{ 't', "-" },
+	{ 'u', "..-" },
+	{ 'v', "...-" },
+	{ 'w', ".--" },
+	{ 'x', "-..-" },
+	{ 'y', "-.--" },
+	{ 'z', "--.." },
+#if 1
+	// normal numbers
+	{ '0', "-----" },
+	{ '1', ".----" },
+	{ '2', "..---" },
+	{ '3', "...--" },
+	{ '4', "....-" },
+	{ '5', "....." },
+	{ '6', "-...." },
+	{ '7', "--..." },
+	{ '8', "---.." },
+	{ '9', "----." },
+#else
+	{ '0', 	"-" },
+	{ '1', 	".-" },
+	{ '2', 	"..-" },
+	{ '3', 	"...-" },
+	{ '4', 	"....-" },
+	{ '5', 	"." },
+	{ '6', 	"-...." },
+	{ '7', 	"-..." },
+	{ '8', 	"-.." },
+	{ '9', 	"-." },
+#endif
+	{ 'E', "........" },
+	{ '&', ".-..." },
+	{ '\'', ".----." },
+	{ '@', ".--.-." },
+	{ ')', "-.--.-" },
+	{ '(', "-.--." },
+	{ ':', "---..." },
+	{ ',', "--..--" },
+	{ '=', "-...-" },
+	{ '!', "-.-.--" },
+	{ '.', ".-.-.-" },
+	{ '-', "-....-" },
+	{ 'X', "-..-" },
+	{ '%', "----- -..-. -----" },
+	{ '+', ".-.-." },
+	{ '"', ".-..-." },
+	{ '?', "..--.." },
+	{ '/', "-..-." }
 };
 
 
@@ -240,9 +360,7 @@ int pa_callback(
 	float * out = reinterpret_cast<float *>(output_buffer);
 	(void) input_buffer;
 
-	for (unsigned i = 0; i < frames_per_buffer; i++) {
-		trainer->step_and_write_to_buffer(out);
-	}
+	trainer->step_and_write_to_buffer(out, frames_per_buffer);
 	return 0;
 }
 
@@ -255,18 +373,13 @@ static char args_doc[] = "ARG1 ARG2"; // TODO
 /* The options we understand. */
 static struct argp_option options[] = {
   {"print-text", 'p', 0,        0, "print the text that is morsed." },
-  {"tick",       't', "TICK",   0, "use this many ms as morse tick" },
+  {"wpm",        'w', "WPM",    0, "words per minute (uses 50 ticks per word)" },
   {"line-len",   'n', "LENGTH", 0, "length of lines" },
   {"line-count", 'c', "LINES",  0, "number of lines" },
   {"level",      'l', "LEVEL",  0, "Koch learning level (>= 2)" },
   { 0 }
 };
 static constexpr int positional_arg_count = 0;
-
-/* Used by main to communicate with parse_opt. */
-struct arguments {
-  int tick_ms, line_len, line_count, level;
-};
 
 /* Parse a single option. */
 static error_t parse_opt (int key, char *arg, struct argp_state *state) {
@@ -275,7 +388,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
 	Trainer::Args * args = reinterpret_cast<Trainer::Args*>(state->input);
 
 	switch (key) {
-	case 't': args->tick_ms        = atoi(arg); break;
+	case 'w': args->wpm            = atoi(arg); break;
 	case 'n': args->line_length    = atoi(arg); break;
 	case 'c': args->line_count     = atoi(arg); break;
 	case 'l': args->training_level = atoi(arg); break;
@@ -308,6 +421,5 @@ int main (int argc, char * argv []) {
 	argp_parse(&argp, argc, argv, 0, 0, &args);
 
 	Trainer trainer { args };
-
-	int error = trainer.train();
+	trainer.train();
 }
