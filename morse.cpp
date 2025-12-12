@@ -1,3 +1,4 @@
+#include <argp.h>
 #include <cstdlib>
 #include <format>
 #include <iostream>
@@ -32,22 +33,27 @@ public:
 	static const std::string chars;
 	static const std::unordered_map<char, std::string> morse_code;
 
-	int training_level;
-	int line_length;
+	class Args {
+	public:
+		bool print_text     { false };
+		int  tick_ms        { 100 };
+		int  training_level {   2 };
+		int  line_length    {  25 };
+		int  line_count     {   5 };
+	};
 
 	// pa_callback shared data
-	float left_phase   {  0.0f };
-	float right_phase  {  0.0f };
+	float left_phase  {  0.0f };
+	float right_phase {  0.0f };
 	bool  playing	  { false };
 
 	PaStream * pa_stream;
 
+	Args args;
+
 	Trainer (
-		int training_level = 2,
-		int line_length = 25
-	) : training_level(training_level),
-		line_length(line_length)
-	{
+		const Args & args
+	) : args(args) {
 		pa_setup();
 	}
 
@@ -83,10 +89,10 @@ public:
 	}
 
 	std::string generate () const {
-		const std::string used = chars.substr(0, training_level);
+		const std::string used = chars.substr(0, args.training_level);
 		std::string result = "";
-		while (result.size() < line_length) {
-			for (int i = 0; i < word_length() && result.size() < line_length; i++) {
+		while (result.size() < args.line_length) {
+			for (int i = 0; i < word_length() && result.size() < args.line_length; i++) {
 				char chosen = used[std::rand() % used.size()];
 				result.push_back(chosen);
 			}
@@ -139,7 +145,7 @@ public:
 				std::cerr << c;
 				for (const bool bit : morse_bits(c)) {
 					playing = bit;
-					Pa_Sleep(100);
+					Pa_Sleep(args.tick_ms);
 				}
 			}
 			std::cerr << std::endl;
@@ -212,7 +218,7 @@ const std::string Trainer::chars = "mkrs";
 
 const std::unordered_map<char, std::string> Trainer::morse_code {
 	{ ' ', " " },
-	{ '=', "-...-" },
+	{ '=', "-...-  " },
 	{ 'm', "--" },
 	{ 'k', "-.." },
 	{ 'r', ".-." },
@@ -240,8 +246,68 @@ int pa_callback(
 	return 0;
 }
 
-int main () {
-	Trainer trainer { 3, 10 };
+const char *argp_program_version = "morse 0.1";
+const char *argp_program_bug_address = "<antonia.obersteiner@gmail.com>";
+static char doc[] = "Morse Code trainer according to Koch method.";
+/* A description of the arguments we accept. */
+static char args_doc[] = "ARG1 ARG2"; // TODO
+
+/* The options we understand. */
+static struct argp_option options[] = {
+  {"print-text", 'p', 0,        0, "print the text that is morsed." },
+  {"tick",       't', "TICK",   0, "use this many ms as morse tick" },
+  {"line-len",   'n', "LENGTH", 0, "length of lines" },
+  {"line-count", 'c', "LINES",  0, "number of lines" },
+  {"level",      'l', "LEVEL",  0, "Koch learning level (>= 2)" },
+  { 0 }
+};
+static constexpr int positional_arg_count = 0;
+
+/* Used by main to communicate with parse_opt. */
+struct arguments {
+  int tick_ms, line_len, line_count, level;
+};
+
+/* Parse a single option. */
+static error_t parse_opt (int key, char *arg, struct argp_state *state) {
+	/* Get the input argument from argp_parse, which we
+	know is a pointer to our arguments structure. */
+	Trainer::Args * args = reinterpret_cast<Trainer::Args*>(state->input);
+
+	switch (key) {
+	case 't': args->tick_ms        = atoi(arg); break;
+	case 'n': args->line_length    = atoi(arg); break;
+	case 'c': args->line_count     = atoi(arg); break;
+	case 'l': args->training_level = atoi(arg); break;
+	case 'p': args->print_text     = true;      break;
+
+	case ARGP_KEY_ARG:
+		if (state->arg_num >= positional_arg_count)
+			/* Too many arguments. */
+			argp_usage (state);
+		break;
+
+	case ARGP_KEY_END:
+		if (state->arg_num < positional_arg_count)
+			/* Not enough arguments. */
+			argp_usage (state);
+		break;
+
+	default:
+		return ARGP_ERR_UNKNOWN;
+	}
+
+	return 0;
+}
+
+/* Our argp parser. */
+static struct argp argp = { options, parse_opt, args_doc, doc };
+
+int main (int argc, char * argv []) {
+	Trainer::Args args;
+	argp_parse(&argp, argc, argv, 0, 0, &args);
+
+	Trainer trainer { args };
 
 	int error = trainer.train();
 }
