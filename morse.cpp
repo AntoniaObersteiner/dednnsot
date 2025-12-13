@@ -6,6 +6,7 @@
 #include <list>
 #include <portaudio.h>
 #include <queue>
+#include <sstream>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -81,6 +82,16 @@ public:
 	// 1 tick = 60.000 ms / (V * 50)
 	double  s_per_tick () const { return 60.0 / (50.0 * args.wpm); }
 	double ms_per_tick () const { return ms_per_tick() * 1000.0; }
+
+	std::string print_config () const {
+		std::stringstream s;
+		s << "frames_per_second: " << frames_per_second   << std::endl;
+		s << "args.wpm: "          << args.wpm            << std::endl;
+		s << "args.level: "        << args.training_level << std::endl;
+		s << "args.line_length: "  << args.line_length    << std::endl;
+		s << "args.line_count: "   << args.line_count     << std::endl;
+		return s.str();
+	}
 
 	std::vector<bool> morse_bits(char letter) {
 		const std::string & code = morse_code.at(letter);
@@ -179,6 +190,8 @@ public:
 
 	float train () {
 		pa_call(" starting", Pa_StartStream, pa_stream);
+
+		std::cout << print_config() << std::endl;
 
 		std::cout << "Type what you hear after the 'vvv'!" << std::endl;
 		std::cout << "Press enter after the '=' (eval at the end)." << std::endl;
