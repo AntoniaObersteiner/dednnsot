@@ -46,6 +46,7 @@ public:
 		int  training_level {   2 };
 		int  line_length    {  25 };
 		int  line_count     {   5 };
+		const char * text { nullptr };
 	};
 
 	// pulse audio playback buffer shared data
@@ -203,14 +204,17 @@ public:
 		std::vector<std::string>  inputs;
 
 		for (int line_number = 0; line_number < args.line_count; line_number++) {
-			const std::string & output = generate();
+			const std::string & output = (
+				args.text ? std::string{args.text} : generate()
+			);
 			auto thread = play_async(output);
 			std::string input;
 			getline(std::cin, input);
 			thread.join();
 
 			errors += difference(input, output);
-			symbols += output.size() - 2; // for " =" at the end of each line
+			// for " =" at the end of each line
+			symbols += output.size() - 2 * !(args.text);
 
 			outputs.push_back(output);
 			inputs .push_back( input);
@@ -390,6 +394,7 @@ static struct argp_option options[] = {
   {"line-len",   'n', "LENGTH", 0, "length of lines" },
   {"line-count", 'c', "LINES",  0, "number of lines" },
   {"level",      'l', "LEVEL",  0, "Koch learning level (>= 2)" },
+  {"text",       't', "TEXT",   0, "what text to use (instead of random text)" },
   { 0 }
 };
 static constexpr int positional_arg_count = 0;
@@ -406,6 +411,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
 	case 'c': args->line_count     = atoi(arg); break;
 	case 'l': args->training_level = atoi(arg); break;
 	case 'p': args->print_text     = true;      break;
+	case 't': args->text           = arg;       break;
 
 	case ARGP_KEY_ARG:
 		if (state->arg_num >= positional_arg_count)
