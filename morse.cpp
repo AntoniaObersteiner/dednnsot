@@ -42,6 +42,7 @@ public:
 	class Args {
 	public:
 		bool print_text     { false };
+		bool draw_code      { false };
 		int  wpm            {  15 };
 		int  training_level {   2 };
 		int  line_length    {  25 };
@@ -102,7 +103,7 @@ public:
 			switch (l) {
 			case '.': return std::list<bool>{1,       0};
 			case '-': return std::list<bool>{1, 1, 1, 0};
-			case ' ': return std::list<bool>{0, 0, 0, 0};
+			case ' ': return std::list<bool>{0, 0};
 			default: throw std::runtime_error(std::format("unknown morse letter '{}'!", l));
 			}
 			} ();
@@ -194,9 +195,11 @@ public:
 
 		std::cout << print_config() << std::endl;
 
-		std::cout << "Type what you hear after the 'vvv'!" << std::endl;
-		std::cout << "Press enter after the '=' (eval at the end)." << std::endl;
-		play("vvv");
+		if (!args.text) {
+			std::cout << "Type what you hear after the 'vvv'!" << std::endl;
+			std::cout << "Press enter after the '=' (eval at the end)." << std::endl;
+			play("vvv");
+		}
 
 		int errors = 0;
 		int symbols = 0;
@@ -244,6 +247,8 @@ public:
 					playing = playing_bits.front();
 					playing_bits.pop();
 					free.release();
+					if (args.draw_code)
+						std::cout << (playing ? '#' : '_') << std::flush;
 				} else {
 					playing = false;
 				}
@@ -390,6 +395,7 @@ static char args_doc[] = "ARG1 ARG2"; // TODO
 /* The options we understand. */
 static struct argp_option options[] = {
   {"print-text", 'p', 0,        0, "print the text that is morsed." },
+  {"draw-code",  'd', 0,        0, "draw the morse code while playing" },
   {"wpm",        'w', "WPM",    0, "words per minute (uses 50 ticks per word)" },
   {"line-len",   'n', "LENGTH", 0, "length of lines" },
   {"line-count", 'c', "LINES",  0, "number of lines" },
@@ -411,6 +417,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
 	case 'c': args->line_count     = atoi(arg); break;
 	case 'l': args->training_level = atoi(arg); break;
 	case 'p': args->print_text     = true;      break;
+	case 'd': args->draw_code      = true;      break;
 	case 't': args->text           = arg;       break;
 
 	case ARGP_KEY_ARG:
