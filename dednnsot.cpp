@@ -415,8 +415,6 @@ int pa_callback(
 const char *argp_program_version = "morse 0.1";
 const char *argp_program_bug_address = "<antonia.obersteiner@gmail.com>";
 static char doc[] = "Morse Code trainer according to Koch method.";
-/* A description of the arguments we accept. */
-static char args_doc[] = "ARG1 ARG2"; // TODO
 
 /* The options we understand. */
 static struct argp_option options[] = {
@@ -466,7 +464,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state) {
 }
 
 /* Our argp parser. */
-static struct argp argp = { options, parse_opt, args_doc, doc };
+static struct argp argp = { options, parse_opt, 0, doc };
 
 int main (int argc, char * argv []) {
 	Trainer::Args args;
