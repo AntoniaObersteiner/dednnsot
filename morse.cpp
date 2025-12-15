@@ -3,6 +3,7 @@
 #include <ctime>
 #include <format>
 #include <iostream>
+#include <iomanip>
 #include <list>
 #include <portaudio.h>
 #include <queue>
@@ -92,6 +93,14 @@ public:
 		s << "args.level: "        << args.training_level << std::endl;
 		s << "args.line_length: "  << args.line_length    << std::endl;
 		s << "args.line_count: "   << args.line_count     << std::endl;
+		return s.str();
+	}
+
+	std::string print_time () const {
+		std::time_t t = std::time(nullptr);
+		const char * const fmt = "%Y-%m-%d_%H-%S-%M";
+		std::stringstream s;
+		s << std::put_time(std::localtime(&t), fmt);
 		return s.str();
 	}
 
@@ -205,14 +214,18 @@ public:
 		int symbols = 0;
 		std::vector<std::string> outputs;
 		std::vector<std::string>  inputs;
+		std::vector<std::string>  starts;
+		std::vector<std::string>   stops;
 
 		for (int line_number = 0; line_number < args.line_count; line_number++) {
 			const std::string & output = (
 				args.text ? std::string{args.text} : generate()
 			);
 			auto thread = play_async(output);
+			starts.push_back(print_time());
 			std::string input;
 			getline(std::cin, input);
+			stops.push_back(print_time());
 			thread.join();
 
 			errors += difference(input, output);
@@ -225,7 +238,11 @@ public:
 
 		for (int line_number = 0; line_number < args.line_count; line_number++) {
 			std::cout << "output: '" << outputs[line_number] << "'" << std::endl;
-			std::cout << " input: '" <<  inputs[line_number] << "'" << std::endl;
+			std::cout << " input: '" <<  inputs[line_number] << "' (error: "
+				<< difference(inputs[line_number], outputs[line_number]) << ")"
+				<< std::endl;
+			std::cout << " start: '" <<  starts[line_number] << "'" << std::endl;
+			std::cout << "  stop: '" <<   stops[line_number] << "'" << std::endl;
 		}
 
 		std::cout << "Errors: " << errors << " / " << symbols << std::endl;
