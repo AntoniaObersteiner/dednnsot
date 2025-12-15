@@ -98,7 +98,7 @@ public:
 
 	std::string print_time () const {
 		std::time_t t = std::time(nullptr);
-		const char * const fmt = "%Y-%m-%d_%H-%S-%M";
+		const char * const fmt = "%Y-%m-%d_%H-%M-%S";
 		std::stringstream s;
 		s << std::put_time(std::localtime(&t), fmt);
 		return s.str();
