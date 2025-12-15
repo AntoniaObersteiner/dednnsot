@@ -256,6 +256,7 @@ public:
 		const unsigned long frames_per_tick = frames_per_second * s_per_tick();
 
 		long unsigned target_frame = frame + frames_per_buffer;
+		long unsigned morse_bit_number = 0;
 
 		for (; frame < target_frame; frame++) {
 			if (frame % frames_per_tick == 0) {
@@ -263,6 +264,7 @@ public:
 					full.acquire();
 					playing = playing_bits.front();
 					playing_bits.pop();
+					morse_bit_number++;
 					free.release();
 					if (args.draw_code)
 						std::cout << (playing ? '#' : '_') << std::flush;
@@ -271,13 +273,20 @@ public:
 				}
 			}
 
-			if (!playing) {
+			// bool left = !(morse_bit_number % 2), right = playing;
+			bool left = playing, right = playing;
+
+			if (!left) {
 				left_phase = 0.0f;
-				right_phase = 0.0f;
 			} else {
 				// simple sawtooth phaser between -1.0 and 1.0.
 				left_phase += 0.01f;
 				if (left_phase >= 1.0f) left_phase -= 2.0f;
+			}
+
+			if (!right) {
+				right_phase = 0.0f;
+			} else {
 				// right has higher pitch
 				right_phase += 0.03f;
 				if (right_phase >= 1.0f) right_phase -= 2.0f;
