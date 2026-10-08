@@ -106,6 +106,12 @@ public:
 	}
 
 	std::vector<bool> morse_bits(char letter) {
+		if ('A' <= letter && letter <= 'Z') {
+			letter += 32;
+		}
+		if (!morse_code.contains(letter)) {
+			throw std::runtime_error(std::format("unknown letter '{}'!", letter));
+		}
 		const std::string & code = morse_code.at(letter);
 		std::vector<bool> result;
 		for (const char l : code) {
