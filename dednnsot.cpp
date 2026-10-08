@@ -93,6 +93,7 @@ public:
 		s << "args.level: "        << args.training_level << std::endl;
 		s << "args.line_length: "  << args.line_length    << std::endl;
 		s << "args.line_count: "   << args.line_count     << std::endl;
+		s << "args.text: '"        << args.text    << "'" << std::endl;
 		return s.str();
 	}
 
@@ -128,7 +129,7 @@ public:
 	}
 
 	std::string generate () const {
-		const std::string used = chars.substr(0, args.training_level);
+		const std::string used = chars.substr(0, args.training_level) + chars.at(args.training_level - 1);
 		std::string result = "";
 		while (result.size() < args.line_length) {
 			int word_length = std::rand() % 8 + 2;
